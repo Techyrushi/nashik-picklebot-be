@@ -60,6 +60,7 @@ router.get("/booking/:id", async (req, res) => {
       date: booking.date,
       slot: booking.slot,
       court: booking.courtName,
+      player: booking.playerCount,
       amount: booking.amount,
       status: booking.status,
       checkedIn: booking.checkedIn || false,
@@ -80,6 +81,7 @@ router.get("/receipt-data/:id", async (req, res) => {
       date: booking.date,
       slot: booking.slot,
       court: booking.courtName,
+      player: booking.playerCount,
       amount: booking.amount,
       status: booking.status,
       paymentId: booking.paymentId,
@@ -117,6 +119,7 @@ router.post("/create-order", async (req, res) => {
         date: booking.date,
         slot: booking.slot,
         court: booking.courtName,
+        player: booking.playerCount
       },
     });
 
@@ -136,6 +139,7 @@ router.post("/create-order", async (req, res) => {
         date: booking.date,
         slot: booking.slot,
         court: booking.courtName,
+        player: booking.playerCount
       },
     });
   } catch (e) {
@@ -191,6 +195,7 @@ router.post("/verify", async (req, res) => {
     }
 
     if (shouldCheckBookings) {
+      // Get all confirmed bookings for the same court, date, and time slot
       const existingBookings = await Booking.find({
         date: booking.date,
         slotId: booking.slotId,
@@ -199,12 +204,30 @@ router.post("/verify", async (req, res) => {
         _id: { $ne: booking._id },
       });
 
-      if (existingBookings.length > 0) {
+      // Calculate total players already booked for this court, date, and time slot
+      let totalBookedPlayers = 0;
+      existingBookings.forEach((existingBooking) => {
+        totalBookedPlayers += existingBooking.playerCount || 1;
+      });
+
+      // Calculate available player capacity
+      const availablePlayers = 4 - totalBookedPlayers; // Maximum 4 players per court
+
+      // Check if the current booking can be accommodated
+      if (availablePlayers < booking.playerCount) {
         return res.status(409).json({
-          error:
-            "This court has already been booked for this time slot. Please choose another court or time slot.",
+          error: `This court only has capacity for ${availablePlayers} more player(s) for this time slot. Your booking requires ${booking.playerCount} players. Please choose another court, time slot, or reduce the number of players.`,
           courtUnavailable: true,
+          availablePlayers: availablePlayers,
+          requestedPlayers: booking.playerCount,
         });
+      }
+
+      // Additional check: if there are any existing bookings at all for this slot
+      if (existingBookings.length > 0) {
+        console.log(
+          `Court ${booking.courtName} has ${totalBookedPlayers} players booked, ${availablePlayers} spots available for ${booking.date} ${booking.slot}`
+        );
       }
     }
 
@@ -228,18 +251,20 @@ router.post("/verify", async (req, res) => {
       const qrCodeLink = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${booking._id}`;
       await sendWhatsApp(
         booking.whatsapp,
-        `💼 Booking Confirmed!
+        `✅ *Booking Confirmed!*
 
 Booking ID: ${booking._id}
-Date: ${booking.date}
-Time: ${booking.slot}
-Court: ${booking.courtName}
+📅 Date: ${booking.date}
+⏰ Time: ${booking.slot}
+🎾 Court: ${booking.courtName}
+👥 Players: ${booking.playerCount}
+💰 Total Amount: ₹${booking.amount}
 
 View your receipt: ${receiptUrl}
 
 QR Code for check-in: ${qrCodeLink}
 
-Thank you for booking with PicklePlay! Reply 'menu' to return to main menu.`
+Thank you for booking with NashikPicklers! Reply 'menu' to return to main menu.`
       );
     }
 
@@ -251,6 +276,7 @@ Thank you for booking with PicklePlay! Reply 'menu' to return to main menu.`
         date: booking.date,
         slot: booking.slot,
         court: booking.courtName,
+        player: booking.playerCount,
         amount: booking.amount,
         paymentId: req.body.razorpay_payment_id,
         receiptUrl: receiptUrl,
@@ -304,12 +330,13 @@ router.post("/check-in/:id", async (req, res) => {
 A player has just checked in:
 
 📋 Booking Details:
-- ID: ${booking._id}
-- Court: ${booking.courtName}
-- Date: ${booking.date}
-- Time: ${booking.slot}
-- Player: ${booking.whatsapp}
-- Check-in Time: ${checkInTime}
+📧 ID: ${booking._id}
+🎾 Court: ${booking.courtName}
+📅 Date: ${booking.date}
+⏰ Time: ${booking.slot}
+👥 Players: ${booking.playerCount}
+💰 Amount: ${booking.amount}
+⏰ Check-in Time: ${checkInTime}
 
 This is an automated notification.`
       );
@@ -323,6 +350,7 @@ This is an automated notification.`
         date: booking.date,
         slot: booking.slot,
         court: booking.courtName,
+        player: booking.playerCount,
         amount: booking.amount,
         status: booking.status,
         checkedIn: booking.checkedIn,
@@ -359,6 +387,7 @@ Booking ID: ${booking._id}
 Date: ${booking.date}
 Time: ${booking.slot}
 Court: ${booking.courtName}
+Players: ${booking.playerCount}
 
 Your booking has been cancelled successfully.`
       );
@@ -400,12 +429,13 @@ Booking ID: ${booking._id}
 Date: ${booking.date}
 Time: ${booking.slot}
 Court: ${booking.courtName}
+Players: ${booking.playerCount}
 
 View your receipt: ${receiptUrl}
 
 QR Code for check-in: ${qrCodeLink}
 
-Thank you for booking with PicklePlay! Reply 'menu' to return to main menu.`
+Thank you for booking with NashikPicklers! Reply 'menu' to return to main menu.`
           );
         }
       }

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PicklePlay QR Scanner</title>
+    <title>NashikPicklers QR Scanner</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <style>
@@ -304,7 +304,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>PicklePlay QR Scanner</h1>
+            <h1>NashikPicklers QR Scanner</h1>
             <p>Scan booking QR codes to check-in players</p>
         </div>
         
@@ -497,7 +497,7 @@
             
             function displayBookingDetails(booking) {
                 let statusClass = 'confirmed';
-                if (booking.status === 'pending') statusClass = 'pending';
+                if (booking.status === 'pending_payment') statusClass = 'pending';
                 if (booking.status === 'cancelled') statusClass = 'cancelled';
                 
                 const detailsHtml = `
@@ -517,6 +517,10 @@
                     <div class="detail-row">
                         <div class="detail-label">Court</div>
                         <div class="detail-value">${booking.court}</div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Players</div>
+                        <div class="detail-value">${booking.player}</div>
                     </div>
                     <div class="detail-row">
                         <div class="detail-label">Amount</div>

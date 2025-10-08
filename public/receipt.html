@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PicklePlay - Booking Receipt</title>
+  <title>NashikPicklers - Booking Receipt</title>
 
   <!-- SweetAlert2 -->
   <link
@@ -226,7 +226,7 @@
 <body>
   <div class="container">
     <div class="logo">
-      <h2>PicklePlay</h2>
+      <h2>NashikPicklers</h2>
     </div>
 
     <h1>Booking Receipt</h1>
@@ -249,6 +249,7 @@
           <p><strong>Date:</strong> <span id="booking-date"></span></p>
           <p><strong>Time:</strong> <span id="booking-slot"></span></p>
           <p><strong>Court:</strong> <span id="booking-court"></span></p>
+          <p><strong>Players:</strong> <span id="booking-player"></span></p>
           <p><strong>Amount:</strong> ₹<span id="booking-amount"></span></p>
           <p>
             <strong>Payment Status:</strong>
@@ -267,7 +268,7 @@
         </div>
       </div>
 
-      <p class="thankyou">🎾 Thank you for booking with PicklePlay!</p>
+      <p class="thankyou">🎾 Thank you for booking with NashikPicklers!</p>
     </div>
 
     <div class="btn-group">
@@ -298,6 +299,7 @@
           document.getElementById("booking-date").textContent = data.date;
           document.getElementById("booking-slot").textContent = data.slot;
           document.getElementById("booking-court").textContent = data.court;
+          document.getElementById("booking-player").textContent = data.player;
           document.getElementById("booking-amount").textContent = data.amount;
           document.getElementById("payment-id").textContent =
             data.paymentId || "N/A";

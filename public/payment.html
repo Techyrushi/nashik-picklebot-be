@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PicklePlay Payment</title>
+    <title>NashikPicklers Payment</title>
 
     <!-- Google Fonts -->
     <link
@@ -139,8 +139,9 @@
 
       .receipt-header {
         display: flex;
-        justify-content: space-between;
-        align-items: center;
+        flex-direction: column; /* Stack heading and invoice vertically */
+        align-items: center; /* Center align both */
+        gap: 5px; /* Optional spacing between heading and invoice */
       }
 
       .receipt h2 {
@@ -162,8 +163,8 @@
 
   <body>
     <div class="container">
-      <img src="/payment/logo" alt="PicklePlay" class="logo" />
-      <h1>PicklePlay Payment</h1>
+      <img src="/payment/logo" alt="NashikPicklers" class="logo" />
+      <h1>NashikPicklers Payment</h1>
 
       <div id="loading"><p>Loading booking details...</p></div>
       <div
@@ -218,6 +219,7 @@
             <p><strong>Date:</strong> ${booking.date}</p>
             <p><strong>Time:</strong> ${booking.slot}</p>
             <p><strong>Court:</strong> ${booking.court}</p>
+            <p><strong>Players:</strong> ${booking.player}</p>
             <p><strong>Amount:</strong> ₹${booking.amount}</p>
           `;
 
@@ -271,7 +273,7 @@
             key: data.key,
             amount: data.amount,
             currency: "INR",
-            name: "PicklePlay",
+            name: "NashikPicklers",
             description: `${bookingData.court} | ${bookingData.date} ${bookingData.slot}`,
             order_id: data.order_id,
             handler: function (response) {
@@ -338,20 +340,21 @@
 
             document.getElementById("booking-details").innerHTML = `
       <div class="receipt">
-        <div class="receipt-header" style="display:flex; justify-content:space-between; align-items:center;">
-          <h2 style="margin:0;">Payment Successful!</h2>
-          <p style="margin:0; font-weight:bold;">Invoice: ${invoiceNumber}</p>
-        </div>
+        <div class="receipt-header">
+  <h2>Payment Successful!</h2>
+  <p style="margin:0; font-weight:bold;">Invoice: ${invoiceNumber}</p>
+</div>
         <hr>
         <p><strong>Booking ID:</strong> ${bookingData.id}</p>
         <p><strong>Date:</strong> ${bookingData.date}</p>
         <p><strong>Time:</strong> ${bookingData.slot}</p>
         <p><strong>Court:</strong> ${bookingData.court}</p>
+        <p><strong>Players:</strong> ${bookingData.player}</p>
         <p><strong>Amount:</strong> ₹${bookingData.amount}</p>
         <p><strong>Payment ID:</strong> ${paymentId}</p>
-        <div class="qr-section">
+        <div class="qr-section" style="text-align:center; margin-top:15px;">
           <p><strong>Check-in QR Code</strong></p>
-          <img src="${qrCodeUrl}" alt="QR Code" />
+          <img src="${qrCodeUrl}" alt="QR Code" style="border-radius:8px;"/>
         </div>
         <button onclick="window.print()" class="btn btn-primary" style="margin-top:20px;">Print Receipt</button>
       </div>
@@ -380,23 +383,37 @@
             throw new Error(data.error || "Failed to cancel booking");
 
           document.getElementById("booking-details").innerHTML = `
-            <h2 style="color:#ff5252;">Booking Cancelled</h2>
-            <p>Your booking has been cancelled successfully.</p>
-            ${
-              data.refundAmount
-                ? `<p><strong>Refund Amount:</strong> ₹${data.refundAmount}</p>`
-                : ""
-            }
-          `;
+      <h2 style="color:#ff5252; text-align:center; margin-bottom:10px;">Booking Cancelled</h2>
+      <p style="text-align:center; margin-bottom:10px;">Your booking has been cancelled successfully.</p>
+      ${
+        data.refundAmount
+          ? `<p style="text-align:center; margin-bottom:15px;"><strong>Refund Amount:</strong> ₹${data.refundAmount}</p>`
+          : ""
+      }
+      <div style="display:flex; justify-content:center; margin-top:20px;">
+        <a href="https://wa.me/?text=I%20just%20cancelled%20my%20NashikPicklers%20booking."
+          style="
+            background:#25d366;
+            color:#fff;
+            font-weight:600;
+            padding:12px 25px;
+            border-radius:10px;
+            text-decoration:none;
+            font-size:16px;
+            transition:0.3s;
+            display:inline-block;
+          "
+          onmouseover="this.style.background='#1ebe57'; this.style.transform='translateY(-2px)';"
+          onmouseout="this.style.background='#25d366'; this.style.transform='translateY(0)';"
+        >
+          Message on WhatsApp
+        </a>
+      </div>
+    `;
 
-          document.getElementById("cancel-button").outerHTML = `
-            <a href="https://wa.me/?text=I%20just%20cancelled%20my%20PicklePlay%20booking."
-              class="btn btn-whatsapp" target="_blank">
-              Message on WhatsApp
-            </a>
-          `;
-
+          // Hide Pay button
           document.getElementById("pay-button").style.display = "none";
+          document.getElementById("cancel-button").style.display = "none";
         } catch (err) {
           document.getElementById("error-message").textContent = err.message;
         }
