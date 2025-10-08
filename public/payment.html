@@ -215,9 +215,10 @@
           currentBooking = booking;
 
           document.getElementById("booking-details").innerHTML = `
-            <p><strong>Booking ID:</strong> ${booking.id}</p>
+            <p><strong>Booking ID:</strong> ${booking.bookingId}</p>
             <p><strong>Date:</strong> ${booking.date}</p>
             <p><strong>Time:</strong> ${booking.slot}</p>
+            <p><strong>Duration:</strong> ${booking.duration}</p>
             <p><strong>Court:</strong> ${booking.court}</p>
             <p><strong>Players:</strong> ${booking.player}</p>
             <p><strong>Amount:</strong> ₹${booking.amount}</p>
@@ -345,9 +346,10 @@
   <p style="margin:0; font-weight:bold;">Invoice: ${invoiceNumber}</p>
 </div>
         <hr>
-        <p><strong>Booking ID:</strong> ${bookingData.id}</p>
+        <p><strong>Booking ID:</strong> ${bookingData.bookingId}</p>
         <p><strong>Date:</strong> ${bookingData.date}</p>
         <p><strong>Time:</strong> ${bookingData.slot}</p>
+        <p><strong>Duration:</strong> ${bookingData.duration}</p>
         <p><strong>Court:</strong> ${bookingData.court}</p>
         <p><strong>Players:</strong> ${bookingData.player}</p>
         <p><strong>Amount:</strong> ₹${bookingData.amount}</p>

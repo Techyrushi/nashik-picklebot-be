@@ -245,9 +245,10 @@
 
       <div class="receipt-content">
         <div class="receipt-details">
-          <p><strong>Booking ID:</strong> <span id="booking-id"></span></p>
+          <p><strong>Booking ID:</strong> <span id="booking-ids"></span></p>
           <p><strong>Date:</strong> <span id="booking-date"></span></p>
           <p><strong>Time:</strong> <span id="booking-slot"></span></p>
+          <p><strong>Duration:</strong> <span id="booking-duration"></span></p>
           <p><strong>Court:</strong> <span id="booking-court"></span></p>
           <p><strong>Players:</strong> <span id="booking-player"></span></p>
           <p><strong>Amount:</strong> ₹<span id="booking-amount"></span></p>
@@ -295,11 +296,13 @@
         .then((data) => {
           if (data.error) throw new Error(data.error);
 
-          document.getElementById("booking-id").textContent = data.id;
+          // document.getElementById("booking-id").textContent = data.id;
+          document.getElementById("booking-ids").textContent = data.bookingId;
           document.getElementById("booking-date").textContent = data.date;
           document.getElementById("booking-slot").textContent = data.slot;
           document.getElementById("booking-court").textContent = data.court;
           document.getElementById("booking-player").textContent = data.player;
+          document.getElementById("booking-duration").textContent = data.duration;
           document.getElementById("booking-amount").textContent = data.amount;
           document.getElementById("payment-id").textContent =
             data.paymentId || "N/A";

@@ -7,6 +7,77 @@ const { nanoid } = require("nanoid");
 
 const router = express.Router();
 
+// Helper function to get the latest counter from database
+async function getLatestCounter(counterType) {
+  try {
+    // You can create a separate counters collection or use the bookings collection
+    const latestBooking = await Booking.findOne().sort({ createdAt: -1 });
+
+    if (!latestBooking) {
+      return 0; // No bookings yet, start from 0
+    }
+
+    if (counterType === 'booking') {
+      // Extract number from bookingId like "NP-01" -> 1
+      const match = latestBooking.bookingId.match(/NP-(\d+)/);
+      return match ? parseInt(match[1]) : 0;
+    } else if (counterType === 'invoice') {
+      // Extract number from invoiceNumber like "NP-2025-01" -> 1
+      const match = latestBooking.invoiceNumber.match(/NP-\d+-(\d+)/);
+      return match ? parseInt(match[1]) : 0;
+    }
+
+    return 0;
+  } catch (error) {
+    console.error('Error getting latest counter:', error);
+    return 0;
+  }
+}
+
+// Add this helper function to split long messages
+async function sendSplitMessage(phoneNumber, message, maxLength = 1500) {
+  if (message.length <= maxLength) {
+    await sendWhatsApp(phoneNumber, message);
+    return;
+  }
+
+  // Split by double newlines first to preserve paragraphs
+  const paragraphs = message.split('\n\n');
+  let currentMessage = '';
+
+  for (const paragraph of paragraphs) {
+    // If adding this paragraph would exceed limit, send current message and start new one
+    if ((currentMessage + paragraph + '\n\n').length > maxLength && currentMessage) {
+      await sendWhatsApp(phoneNumber, currentMessage.trim());
+      currentMessage = paragraph + '\n\n';
+    } else {
+      currentMessage += paragraph + '\n\n';
+    }
+  }
+
+  // Send any remaining content
+  if (currentMessage.trim()) {
+    await sendWhatsApp(phoneNumber, currentMessage.trim());
+  }
+}
+
+// Helper function to generate Booking ID (NP-01, NP-02, etc.)
+async function generateBookingId() {
+  const latestCounter = await getLatestCounter('booking');
+  const nextCounter = latestCounter + 1;
+  const id = `NP-${nextCounter.toString().padStart(2, '0')}`;
+  return id;
+}
+
+// Helper function to generate Invoice Number (NP-2025-01, etc.)
+async function generateInvoiceNumber() {
+  const latestCounter = await getLatestCounter('invoice');
+  const nextCounter = latestCounter + 1;
+  const currentYear = new Date().getFullYear();
+  const invoiceNo = `NP-${currentYear}-${nextCounter.toString().padStart(2, '0')}`;
+  return invoiceNo;
+}
+
 // Helper function to generate available dates for next 7 days with day names
 function getNextSevenDays() {
   const dates = [];
@@ -71,9 +142,23 @@ async function isSlotAvailableForPlayers(
   return availablePlayers >= requiredPlayers;
 }
 
-// Helper function to calculate amount based on court price and player count
-function calculateAmount(courtPrice, playerCount) {
-  return courtPrice * playerCount;
+// Helper function to calculate amount based on duration and player count
+function calculateAmount(duration, playerCount) {
+  const pricePerPlayer = duration === "2 hours" ? 300 : 200;
+  return pricePerPlayer * playerCount;
+}
+
+// Helper function to get duration from slot time
+function getDurationFromSlot(slotTime) {
+  // Assuming slot format like "7:00 AM - 8:00 AM" or "7:00 AM - 9:00 AM"
+  const timeRange = slotTime.split(" - ");
+  if (timeRange.length !== 2) return "1 hour";
+
+  const startTime = new Date(`2000-01-01 ${timeRange[0]}`);
+  const endTime = new Date(`2000-01-01 ${timeRange[1]}`);
+  const durationHours = (endTime - startTime) / (1000 * 60 * 60);
+
+  return durationHours === 2 ? "2 hours" : "1 hour";
 }
 
 // Helper function to parse time and check 2-hour buffer
@@ -121,6 +206,33 @@ function isTimeSlotAvailable(slotTime, selectedDate) {
   }
 }
 
+// Function to create payment link with expiry
+function createPaymentLink(bookingId) {
+  const baseUrl = process.env.BASE_URL || "http://localhost:4000";
+  const paymentLink = `${baseUrl}/payment?booking=${bookingId}`;
+
+  // Set expiry after 5 minutes
+  setTimeout(async () => {
+    try {
+      const booking = await Booking.findById(bookingId);
+      if (booking && booking.status === "pending_payment") {
+        booking.status = "expired";
+        await booking.save();
+
+        // Send expiry message
+        await sendWhatsApp(
+          booking.whatsapp,
+          `❌ *Payment Link Expired*\n\nYour payment link for booking ${booking.bookingId} has expired. Please book again to confirm your slot.\n\nReply 'menu' to return to main menu.`
+        );
+      }
+    } catch (error) {
+      console.error("Error handling payment link expiry:", error);
+    }
+  }, 5 * 60 * 1000); // 5 minutes
+
+  return paymentLink;
+}
+
 router.post("/", async (req, res) => {
   try {
     const from = req.body.From;
@@ -166,7 +278,7 @@ Reply with a number or option name.`
         from,
         `💶 *Welcome to NashikPicklers Court Booking!* 🎾
 
-Hello ${userName}, please select an option:
+Hello +${userName}, please select an option:
 
 *1️⃣ Book Court* - Reserve your court now
 *2️⃣ My Bookings* - View your reservations
@@ -206,9 +318,10 @@ Reply with a number or option name.`
           let text = "📚 *Your Bookings:*\n\n";
           bookings.forEach((b, i) => {
             text += `*Booking #${i + 1}*\n`;
-            text += `🆔 ID: ${b._id}\n`;
+            text += `🆔 ID: ${b.bookingId}\n`;
             text += `📅 Date: ${b.date}\n`;
             text += `⏰ Time: ${b.slot}\n`;
+            text += `⏱️ Duration: ${b.duration}\n`;
             text += `🎾 Court: ${b.courtName}\n`;
             text += `👥 Players: ${b.playerCount || 1}\n`;
             text += `💰 Amount: ₹${b.amount}\n`;
@@ -236,26 +349,20 @@ Reply with a number or option name.`
         body.includes("pricing") ||
         body.includes("rules")
       ) {
-        // Get court prices from database to show dynamic pricing
-        const courts = await Court.find();
         let pricingInfo = `💰 *NashikPicklers Pricing & Rules*\n\n*Court Pricing (per player):*\n`;
-
-        courts.forEach((court) => {
-          pricingInfo += `• ${court.name}: ₹${court.price} per player\n`;
-        });
+        pricingInfo += `• 1 hour session: ₹200 per player\n`;
+        pricingInfo += `• 2 hours session: ₹300 per player\n`;
 
         pricingInfo += `\n*Example Calculations:*\n`;
-        courts.forEach((court) => {
-          pricingInfo += `• ${court.name} with 2 players: ₹${
-            court.price * 2
-          }\n`;
-          pricingInfo += `• ${court.name} with 3 players: ₹${
-            court.price * 3
-          }\n`;
-          pricingInfo += `• ${court.name} with 4 players: ₹${
-            court.price * 4
-          }\n\n`;
-        });
+        pricingInfo += `• 2 players for 1 hour: ₹400\n`;
+        pricingInfo += `• 3 players for 1 hour: ₹600\n`;
+        pricingInfo += `• 4 players for 1 hour: ₹800\n`;
+        pricingInfo += `• 2 players for 2 hours: ₹600\n`;
+        pricingInfo += `• 3 players for 2 hours: ₹900\n`;
+        pricingInfo += `• 4 players for 2 hours: ₹1200\n\n`;
+
+        pricingInfo += `⏰ *Business Hours:*\n`;
+        pricingInfo += `• 7:00 AM to 10:00 PM\n\n`;
 
         pricingInfo += `⚠️ *Booking Rules:*
 • Bookings must be made at least 2 hours in advance
@@ -337,15 +444,14 @@ Reply with a number or option name.`
       const slots = await Slot.find();
       const courts = await Court.find();
 
-      let availabilityMsg = `💸 Available time slots for ${
-        availableDates[idx - 1].display
-      }:\n\n`;
+      // In the check_availability_date stage
+      let availabilityMsg = `💸 Available time slots for ${availableDates[idx - 1].display}:\n\n`;
 
       if (!slots.length || !courts.length) {
-        availabilityMsg =
-          "No time slots or courts configured. Please try another date or contact admin.";
+        availabilityMsg = "No time slots or courts configured. Please try another date or contact admin.";
       } else {
         let hasAvailableSlots = false;
+        let slotMessages = [];
 
         for (const slot of slots) {
           if (!isTimeSlotAvailable(slot.time, selectedDate)) {
@@ -362,27 +468,39 @@ Reply with a number or option name.`
               court._id
             );
             if (availablePlayers >= 2) {
-              // Minimum 2 players required
-              slotInfo += `  • ${court.name}: ${availablePlayers} players available (₹${court.price}/player)\n`;
+              const duration = getDurationFromSlot(slot.time);
+              const pricePerPlayer = duration === "2 hours" ? 300 : 200;
+              slotInfo += `  • ${court.name}: ${availablePlayers} players available (₹${pricePerPlayer}/player for ${duration})\n`;
               hasAvailableCourts = true;
               hasAvailableSlots = true;
             }
           }
 
           if (hasAvailableCourts) {
-            availabilityMsg += slotInfo + "\n";
+            slotMessages.push(slotInfo);
           }
         }
 
         if (!hasAvailableSlots) {
-          availabilityMsg =
-            "No available time slots for this date. Please select another date.";
+          availabilityMsg = "No available time slots for this date. Please select another date.";
+        } else {
+          // Send availability in chunks to avoid exceeding character limit
+          let currentChunk = availabilityMsg;
+
+          for (const slotMsg of slotMessages) {
+            if ((currentChunk + slotMsg + "\n").length > 1500) {
+              await sendSplitMessage(from, currentChunk);
+              currentChunk = slotMsg + "\n";
+            } else {
+              currentChunk += slotMsg + "\n";
+            }
+          }
+
+          availabilityMsg = currentChunk + "\nReply with 'book' to make a booking or 'menu' to return to main menu.";
         }
       }
 
-      availabilityMsg +=
-        "\nReply with 'book' to make a booking or 'menu' to return to main menu.";
-      await sendWhatsApp(from, availabilityMsg);
+      await sendSplitMessage(from, availabilityMsg);
       session.stage = "after_availability";
       return res.end();
     }
@@ -448,17 +566,18 @@ Reply with the number or option name.`
 
       session.stage = "choose_players";
 
-      // Get court prices to show pricing information
-      const courts = await Court.find();
-      let playerOptions = `👥 *Select Number of Players*\n\nMinimum: 2 players\nMaximum: 4 players per court\n\n`;
-
-      courts.forEach((court) => {
-        playerOptions += `*${court.name} Pricing:*\n`;
-        playerOptions += `• 2 players: ₹${court.price * 2}\n`;
-        playerOptions += `• 3 players: ₹${court.price * 3}\n`;
-        playerOptions += `• 4 players: ₹${court.price * 4}\n\n`;
-      });
-
+      let playerOptions = `👥 *Select Number of Players*\n\n`;
+      playerOptions += `*Pricing Information:*\n`;
+      playerOptions += `• 1 hour session: ₹200 per player\n`;
+      playerOptions += `• 2 hours session: ₹300 per player\n\n`;
+      playerOptions += `*Example Calculations:*\n`;
+      playerOptions += `• 2 players for 1 hour: ₹400\n`;
+      playerOptions += `• 3 players for 1 hour: ₹600\n`;
+      playerOptions += `• 4 players for 1 hour: ₹800\n`;
+      playerOptions += `• 2 players for 2 hours: ₹600\n`;
+      playerOptions += `• 3 players for 2 hours: ₹900\n`;
+      playerOptions += `• 4 players for 2 hours: ₹1200\n\n`;
+      playerOptions += `Minimum: 2 players\nMaximum: 4 players per court\n\n`;
       playerOptions += `Reply with the number of players (2, 3, or 4).`;
 
       await sendWhatsApp(from, playerOptions);
@@ -476,7 +595,6 @@ Reply with the number or option name.`
       }
 
       session.draft.playerCount = playerCount;
-      // Amount will be calculated later when court is selected
 
       const slots = await Slot.find({ status: "Active" });
       if (!slots.length) {
@@ -528,26 +646,29 @@ Please reply with:
       }
 
       function parseTimeToNumber(slotTime) {
-        // slotTime example: "7:00 PM - 8:00 PM"
-        const [startTime] = slotTime.split(" - "); // take first part before '-'
-        const [time, meridian] = startTime.trim().split(" "); // ["7:00", "PM"]
+        const [startTime] = slotTime.split(" - ");
+        const [time, meridian] = startTime.trim().split(" ");
 
         let [hour, minute] = time.split(":").map(Number);
 
-        // Convert 12-hour to 24-hour
         if (meridian === "PM" && hour !== 12) hour += 12;
         if (meridian === "AM" && hour === 12) hour = 0;
 
-        return hour * 60 + minute; // total minutes since midnight
+        return hour * 60 + minute;
       }
 
-      // Sort your available slots array based on start time
+      // Sort available slots array based on start time
       availableSlots.sort((a, b) => {
         return parseTimeToNumber(a.time) - parseTimeToNumber(b.time);
       });
 
       let msg = `⏰ Available time slots for ${session.draft.dateDisplay} (${playerCount} players):\n\n`;
-      availableSlots.forEach((s, i) => (msg += `*${i + 1}. ${s.time}*\n`));
+      availableSlots.forEach((s, i) => {
+        const duration = getDurationFromSlot(s.time);
+        const pricePerPlayer = duration === "2 hours" ? 300 : 200;
+        const totalPrice = pricePerPlayer * session.draft.playerCount;
+        msg += `*${i + 1}. ${s.time}* (${duration}) - ₹${totalPrice}\n`;
+      });
       msg += "\nReply with the slot number.";
       msg += "\nReply 'back' to choose different number of players.";
 
@@ -561,17 +682,18 @@ Please reply with:
       if (body === "back") {
         session.stage = "choose_players";
 
-        // Get court prices to show pricing information
-        const courts = await Court.find();
-        let playerOptions = `👥 *Select Number of Players*\n\nMinimum: 2 players\nMaximum: 4 players per court\n\n`;
-
-        courts.forEach((court) => {
-          playerOptions += `*${court.name} Pricing:*\n`;
-          playerOptions += `• 2 players: ₹${court.price * 2}\n`;
-          playerOptions += `• 3 players: ₹${court.price * 3}\n`;
-          playerOptions += `• 4 players: ₹${court.price * 4}\n\n`;
-        });
-
+        let playerOptions = `👥 *Select Number of Players*\n\n`;
+        playerOptions += `*Pricing Information:*\n`;
+        playerOptions += `• 1 hour session: ₹200 per player\n`;
+        playerOptions += `• 2 hours session: ₹300 per player\n\n`;
+        playerOptions += `*Example Calculations:*\n`;
+        playerOptions += `• 2 players for 1 hour: ₹400\n`;
+        playerOptions += `• 3 players for 1 hour: ₹600\n`;
+        playerOptions += `• 4 players for 1 hour: ₹800\n`;
+        playerOptions += `• 2 players for 2 hours: ₹600\n`;
+        playerOptions += `• 3 players for 2 hours: ₹900\n`;
+        playerOptions += `• 4 players for 2 hours: ₹1200\n\n`;
+        playerOptions += `Minimum: 2 players\nMaximum: 4 players per court\n\n`;
         playerOptions += `Reply with the number of players (2, 3, or 4).`;
 
         await sendWhatsApp(from, playerOptions);
@@ -602,17 +724,11 @@ Reply with the number or option name.`
       if (body === "back") {
         session.stage = "choose_players";
 
-        // Get court prices to show pricing information
-        const courts = await Court.find();
-        let playerOptions = `👥 *Select Number of Players*\n\nMinimum: 2 players\nMaximum: 4 players per court\n\n`;
-
-        courts.forEach((court) => {
-          playerOptions += `*${court.name} Pricing:*\n`;
-          playerOptions += `• 2 players: ₹${court.price * 2}\n`;
-          playerOptions += `• 3 players: ₹${court.price * 3}\n`;
-          playerOptions += `• 4 players: ₹${court.price * 4}\n\n`;
-        });
-
+        let playerOptions = `👥 *Select Number of Players*\n\n`;
+        playerOptions += `*Pricing Information:*\n`;
+        playerOptions += `• 1 hour session: ₹200 per player\n`;
+        playerOptions += `• 2 hours session: ₹300 per player\n\n`;
+        playerOptions += `Minimum: 2 players\nMaximum: 4 players per court\n\n`;
         playerOptions += `Reply with the number of players (2, 3, or 4).`;
 
         await sendWhatsApp(from, playerOptions);
@@ -632,6 +748,7 @@ Reply with the number or option name.`
       const slot = slots[idx - 1];
       session.draft.slot = slot.time;
       session.draft.slotId = slot._id;
+      session.draft.duration = getDurationFromSlot(slot.time);
 
       // Get available courts for this slot and player count
       const courts = await Court.find();
@@ -661,10 +778,8 @@ Reply with the number or option name.`
 
       let msg = `🎾 Available courts for ${session.draft.dateDisplay} – ${session.draft.slot} (${session.draft.playerCount} players):\n\n`;
       availableCourts.forEach((c, i) => {
-        const courtAmount = calculateAmount(c.price, session.draft.playerCount);
-        msg += `*${i + 1}. ${c.name}* - ₹${c.price}/player × ${
-          session.draft.playerCount
-        } = ₹${courtAmount}\n`;
+        const courtAmount = calculateAmount(session.draft.duration, session.draft.playerCount);
+        msg += `*${i + 1}. ${c.name}* - ₹${courtAmount} (${session.draft.duration})\n`;
       });
       msg += "\nReply with the court number.";
       msg += "\nReply 'back' to choose different time slot.";
@@ -679,7 +794,12 @@ Reply with the number or option name.`
       if (body === "back") {
         session.stage = "choose_slot";
         let msg = `⏰ Available time slots for ${session.draft.dateDisplay} (${session.draft.playerCount} players):\n\n`;
-        session.slots.forEach((s, i) => (msg += `*${i + 1}. ${s.time}*\n`));
+        session.slots.forEach((s, i) => {
+          const duration = getDurationFromSlot(s.time);
+          const pricePerPlayer = duration === "2 hours" ? 300 : 200;
+          const totalPrice = pricePerPlayer * session.draft.playerCount;
+          msg += `*${i + 1}. ${s.time}* (${duration}) - ₹${totalPrice}\n`;
+        });
         msg += "\nReply with the slot number.";
         msg += "\nReply 'back' to choose different number of players.";
         await sendWhatsApp(from, msg);
@@ -699,137 +819,58 @@ Reply with the number or option name.`
       const court = courts[idx - 1];
       session.draft.courtId = court._id;
       session.draft.courtName = court.name;
-      session.draft.courtPrice = court.price;
       session.draft.amount = calculateAmount(
-        court.price,
+        session.draft.duration,
         session.draft.playerCount
       );
 
-      // Show booking summary before creating
+      // Generate booking summary and show payment link directly
+      const bookingId = await generateBookingId();
+      const invoiceNumber = await generateInvoiceNumber();
+
       const summary = `💺 *Booking Summary:*
 
+🆔 Booking ID: ${bookingId}
 📅 Date: ${session.draft.dateDisplay}
 ⏰ Time: ${session.draft.slot}
+⏱️ Duration: ${session.draft.duration}
 🎾 Court: ${session.draft.courtName}
-💰 Court Price: ₹${session.draft.courtPrice} per player
 👥 Players: ${session.draft.playerCount}
-💵 Total Amount: ₹${session.draft.courtPrice} × ${session.draft.playerCount} = ₹${session.draft.amount}
+💵 Total Amount: ₹${session.draft.amount}
 
-Reply with 'confirm' to proceed with booking.
-Reply 'back' to choose different court.
-Reply 'cancel' to cancel booking.`;
+*Payment Required to Confirm Booking*
 
-      session.stage = "confirm_booking";
+💰 *Payment Link:* ${createPaymentLink(bookingId)}
+
+⚠️ *Payment expires in 5 minutes*
+
+Reply 'cancel' to cancel this booking.
+Reply 'menu' to return to main menu.`;
+
+      // Create booking with pending_payment status
+      const booking = await Booking.create({
+        bookingId: bookingId,
+        invoiceNumber: invoiceNumber,
+        whatsapp: from,
+        date: session.draft.date,
+        slot: session.draft.slot,
+        slotId: session.draft.slotId,
+        courtId: session.draft.courtId,
+        courtName: session.draft.courtName,
+        duration: session.draft.duration,
+        playerCount: session.draft.playerCount,
+        amount: session.draft.amount,
+        status: "pending_payment",
+      });
+
+      session.bookingId = booking._id;
+      session.stage = "payment_pending";
+
       await sendWhatsApp(from, summary);
       return res.end();
     }
 
-    if (session.stage === "confirm_booking") {
-      if (body === "back") {
-        session.stage = "choose_court";
-        let msg = `🎾 Available courts for ${session.draft.dateDisplay} – ${session.draft.slot} (${session.draft.playerCount} players):\n\n`;
-        session.courts.forEach((c, i) => {
-          const courtAmount = calculateAmount(
-            c.price,
-            session.draft.playerCount
-          );
-          msg += `*${i + 1}. ${c.name}* - ₹${c.price}/player × ${
-            session.draft.playerCount
-          } = ₹${courtAmount}\n`;
-        });
-        msg += "\nReply with the court number.";
-        await sendWhatsApp(from, msg);
-        return res.end();
-      } else if (body === "confirm" || body.includes("confirm")) {
-        // Validate time again before confirming booking
-        if (!isTimeSlotAvailable(session.draft.slot, session.draft.date)) {
-          await sendWhatsApp(
-            from,
-            "Sorry, this time slot is no longer available for booking. Please select a time slot at least 2 hours in the future."
-          );
-          session.stage = "choose_date";
-          delete session.draft;
-          return res.end();
-        }
-
-        // Check if the court still has capacity for requested players
-        const isAvailable = await isSlotAvailableForPlayers(
-          session.draft.date,
-          session.draft.slot,
-          session.draft.courtId,
-          session.draft.playerCount
-        );
-
-        if (!isAvailable) {
-          await sendWhatsApp(
-            from,
-            "Sorry, this court doesn't have enough capacity for your requested players. Please try booking another court or time slot."
-          );
-          session.stage = "choose_date";
-          delete session.draft;
-          return res.end();
-        }
-
-        // Create booking (pending_payment)
-        const booking = await Booking.create({
-          whatsapp: from,
-          date: session.draft.date,
-          slot: session.draft.slot,
-          slotId: session.draft.slotId,
-          courtId: session.draft.courtId,
-          courtName: session.draft.courtName,
-          courtPrice: session.draft.courtPrice, // Store court price for reference
-          playerCount: session.draft.playerCount,
-          amount: session.draft.amount,
-          status: "pending_payment",
-        });
-
-        // Create Razorpay payment link
-        const paymentLink =
-          (process.env.BASE_URL || "http://localhost:4000") +
-          `/payment?booking=${booking._id}`;
-        session.stage = "after_booking";
-        session.bookingId = booking._id;
-
-        await sendWhatsApp(
-          from,
-          `💼 *Booking Summary:*
-
-Booking ID: ${booking._id}
-📅 Date: ${session.draft.dateDisplay}
-⏰ Time: ${booking.slot}
-🎾 Court: ${booking.courtName}
-💰 Court Price: ₹${booking.courtPrice} per player
-👥 Players: ${booking.playerCount}
-💵 Total Amount: ₹${booking.amount}
-
-Payment Link: ${paymentLink}
-
-Please complete your payment using the link above.
-Reply 'cancel' to cancel booking.
-Reply 'modify' to modify this booking.`,
-          true
-        );
-
-        return res.end();
-      } else if (body === "cancel" || body.includes("cancel")) {
-        delete session.draft;
-        session.stage = "menu";
-        await sendWhatsApp(
-          from,
-          "Booking cancelled. Reply with 'menu' to see options."
-        );
-        return res.end();
-      } else {
-        await sendWhatsApp(
-          from,
-          "Please reply with 'confirm' to proceed, 'back' for courts, or 'cancel' to cancel."
-        );
-        return res.end();
-      }
-    }
-
-    if (session.stage === "after_booking") {
+    if (session.stage === "payment_pending") {
       if (body.includes("paid")) {
         const booking = await Booking.findById(session.bookingId);
         if (!booking) {
@@ -866,104 +907,32 @@ Reply 'modify' to modify this booking.`,
         await booking.save();
 
         // Generate QR code for check-in
-        const qrCodeLink = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${booking._id}`;
-        const receiptUrl = `${
-          process.env.BASE_URL || "http://localhost:4000"
-        }/payment/receipt/${booking._id}`;
+        const qrCodeLink = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${booking.bookingId}`;
+        const receiptUrl = `${process.env.BASE_URL || "http://localhost:4000"
+          }/payment/receipt/${booking._id}`;
 
         await sendWhatsApp(
           from,
           `✅ *Booking Confirmed!*
 
-Booking ID: ${booking._id}
+🆔 Booking ID: ${booking.bookingId}
 📅 Date: ${session.draft.dateDisplay}
 ⏰ Time: ${booking.slot}
+⏱️ Duration: ${booking.duration}
 🎾 Court: ${booking.courtName}
-💰 Court Price: ₹${booking.courtPrice} per player
 👥 Players: ${booking.playerCount}
 💵 Total Amount: ₹${booking.amount}
+📄 Invoice: ${booking.invoiceNumber}
 
 QR Code for check-in: ${qrCodeLink}
 Receipt: ${receiptUrl}
 
-Reply 'modify' to modify booking.
-Reply 'cancel' to cancel booking.
 Reply 'menu' for main menu.`
         );
 
         session.stage = "booking_confirmed";
         return res.end();
-      } else if (body.includes("modify")) {
-        // Store current booking info and start modification
-        session.originalBookingId = session.bookingId;
-        session.stage = "choose_date";
-        session.isModifying = true;
-
-        const availableDates = getNextSevenDays();
-        let dateOptions = "🗓️ *Select New Booking Date:*\n\n";
-        availableDates.forEach((date, i) => {
-          if (!date.isPast) {
-            dateOptions += `*${i + 1}️⃣ ${date.display}*\n`;
-          }
-        });
-        dateOptions += "\nReply with the date number.";
-        session.availableDates = availableDates;
-
-        await sendWhatsApp(
-          from,
-          "🔄 *Modify Booking*\n\nLet's update your booking. First, select a new date:"
-        );
-        await sendWhatsApp(from, dateOptions);
-        return res.end();
-      } else if (body.includes("cancel")) {
-        const booking = await Booking.findById(session.bookingId);
-        if (booking) {
-          booking.status = "cancelled";
-          await booking.save();
-          await sendWhatsApp(
-            from,
-            "Booking cancelled successfully. Reply 'menu' to return to main menu."
-          );
-        } else {
-          await sendWhatsApp(
-            from,
-            "Booking not found. Reply 'menu' to return to main menu."
-          );
-        }
-        delete sessions[from];
-        return res.end();
-      } else {
-        await sendWhatsApp(
-          from,
-          "Please reply with 'paid' after payment, 'modify' to change booking, or 'cancel' to cancel."
-        );
-        return res.end();
-      }
-    }
-
-    if (session.stage === "booking_confirmed") {
-      if (body.includes("modify")) {
-        session.stage = "choose_date";
-        session.isModifying = true;
-        session.originalBookingId = session.bookingId;
-
-        const availableDates = getNextSevenDays();
-        let dateOptions = "🗓️ *Select New Booking Date:*\n\n";
-        availableDates.forEach((date, i) => {
-          if (!date.isPast) {
-            dateOptions += `*${i + 1}️⃣ ${date.display}*\n`;
-          }
-        });
-        dateOptions += "\nReply with the date number.";
-        session.availableDates = availableDates;
-
-        await sendWhatsApp(
-          from,
-          "🔄 *Modify Booking*\n\nLet's update your booking. First, select a new date:"
-        );
-        await sendWhatsApp(from, dateOptions);
-        return res.end();
-      } else if (body.includes("cancel")) {
+      } else if (body === "cancel" || body.includes("cancel")) {
         const booking = await Booking.findById(session.bookingId);
         if (booking) {
           booking.status = "cancelled";
@@ -996,62 +965,31 @@ Reply with the number or option name.`
       } else {
         await sendWhatsApp(
           from,
-          "Please reply with 'modify' to change booking, 'cancel' to cancel, or 'menu' for main menu."
+          "Please reply with 'paid' after completing payment, 'cancel' to cancel booking, or 'menu' for main menu."
         );
         return res.end();
       }
     }
 
-    // Handle modification completion
-    if (session.stage === "confirm_booking" && session.isModifying) {
-      if (body === "confirm" || body.includes("confirm")) {
-        // Create new booking for modification
-        const newBooking = await Booking.create({
-          whatsapp: from,
-          date: session.draft.date,
-          slot: session.draft.slot,
-          slotId: session.draft.slotId,
-          courtId: session.draft.courtId,
-          courtName: session.draft.courtName,
-          courtPrice: session.draft.courtPrice,
-          playerCount: session.draft.playerCount,
-          amount: session.draft.amount,
-          status: "pending_payment",
-          modifiedFrom: session.originalBookingId,
-        });
-
-        // Cancel original booking
-        await Booking.findByIdAndUpdate(session.originalBookingId, {
-          status: "modified",
-          modifiedTo: newBooking._id,
-        });
-
-        const paymentLink =
-          (process.env.BASE_URL || "http://localhost:4000") +
-          `/payment?booking=${newBooking._id}`;
-        session.bookingId = newBooking._id;
-        session.stage = "after_booking";
-        delete session.isModifying;
-        delete session.originalBookingId;
-
+    if (session.stage === "booking_confirmed") {
+      if (body === "menu") {
+        session.stage = "menu";
         await sendWhatsApp(
           from,
-          `🔄 *Booking Modified!*
+          `1. Book Court
+2. My Bookings
+3. Check Availability
+4. Pricing & Rules
+5. Contact Admin
 
-New Booking ID: ${newBooking._id}
-📅 Date: ${session.draft.dateDisplay}
-⏰ Time: ${newBooking.slot}
-🎾 Court: ${newBooking.courtName}
-💰 Court Price: ₹${newBooking.courtPrice} per player
-👥 Players: ${newBooking.playerCount}
-💵 Total Amount: ₹${newBooking.amount}
-
-Payment Link: ${paymentLink}
-
-Please complete payment for the modified booking.
-Reply 'paid' after payment.`
+Reply with the number or option name.`
         );
-
+        return res.end();
+      } else {
+        await sendWhatsApp(
+          from,
+          "Please reply with 'menu' to return to main menu."
+        );
         return res.end();
       }
     }

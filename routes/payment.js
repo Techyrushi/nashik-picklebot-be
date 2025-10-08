@@ -5,6 +5,7 @@ const Slot = require("../models/Slot");
 const bodyParser = require("body-parser");
 const sendWhatsApp = require("../utils/sendWhatsApp");
 const path = require("path");
+const mongoose = require("mongoose");
 
 const router = express.Router();
 router.use(bodyParser.json());
@@ -14,6 +15,18 @@ const razor = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID || "rzp_test_ROwggD6SO2W63d",
   key_secret: process.env.RAZORPAY_KEY_SECRET || "9L6QHo5bRY4GMW3wacJgM9SJ",
 });
+
+// Helper function to find booking by either _id or bookingId
+async function findBookingById(id) {
+  // Check if it's a valid MongoDB ObjectId
+  if (mongoose.Types.ObjectId.isValid(id)) {
+    const booking = await Booking.findById(id);
+    if (booking) return booking;
+  }
+  
+  // If not found by ObjectId, try finding by bookingId (NP-01, etc.)
+  return await Booking.findOne({ bookingId: id });
+}
 
 // Serve payment page
 router.get("/", (req, res) => {
@@ -40,7 +53,7 @@ router.get("/logo", (req, res) => {
 // Serve receipt page
 router.get("/receipt/:id", async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const booking = await findBookingById(req.params.id);
     if (!booking) return res.status(404).send("Booking not found");
 
     res.sendFile(path.join(__dirname, "../public/receipt.html"));
@@ -52,11 +65,12 @@ router.get("/receipt/:id", async (req, res) => {
 // Get booking details for payment page
 router.get("/booking/:id", async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const booking = await findBookingById(req.params.id);
     if (!booking) return res.status(404).json({ error: "Booking not found" });
 
     res.json({
       id: booking._id,
+      bookingId: booking.bookingId, // Include the custom booking ID
       date: booking.date,
       slot: booking.slot,
       court: booking.courtName,
@@ -64,6 +78,7 @@ router.get("/booking/:id", async (req, res) => {
       amount: booking.amount,
       status: booking.status,
       checkedIn: booking.checkedIn || false,
+      duration: booking.duration, // Include duration
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -73,11 +88,12 @@ router.get("/booking/:id", async (req, res) => {
 // Get receipt data
 router.get("/receipt-data/:id", async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const booking = await findBookingById(req.params.id);
     if (!booking) return res.status(404).json({ error: "Booking not found" });
 
     res.json({
       id: booking._id,
+      bookingId: booking.bookingId,
       date: booking.date,
       slot: booking.slot,
       court: booking.courtName,
@@ -88,6 +104,7 @@ router.get("/receipt-data/:id", async (req, res) => {
       invoiceNumber: booking.invoiceNumber,
       createdAt: booking.createdAt,
       checkedIn: booking.checkedIn || false,
+      duration: booking.duration,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -98,7 +115,7 @@ router.get("/receipt-data/:id", async (req, res) => {
 router.post("/create-order", async (req, res) => {
   const { bookingId, amount } = req.body;
   try {
-    const booking = await Booking.findById(bookingId);
+    const booking = await findBookingById(bookingId);
     if (!booking) return res.status(404).json({ error: "Booking not found" });
 
     // Use booking amount if available, fallback to provided amount
@@ -111,35 +128,38 @@ router.post("/create-order", async (req, res) => {
 
     // Create Razorpay order (amount in smallest currency unit)
     const order = await razor.orders.create({
-      amount: Math.round(paymentAmount * 100), // e.g., 200 CNY -> 20000 fen
-      currency: "INR", // Using INR for Razorpay
-      receipt: `booking_${bookingId}`,
+      amount: Math.round(paymentAmount * 100), // e.g., 200 INR -> 20000 paise
+      currency: "INR",
+      receipt: `booking_${booking.bookingId || booking._id}`,
       notes: {
-        bookingId,
+        bookingId: booking._id.toString(), // Store MongoDB ID in notes
+        customBookingId: booking.bookingId, // Store custom ID as well
         date: booking.date,
         slot: booking.slot,
         court: booking.courtName,
-        player: booking.playerCount
+        player: booking.playerCount,
+        duration: booking.duration,
       },
     });
 
     // Save order id with booking
     booking.razorpayOrderId = order.id;
-    booking.paymentId = order.payment_id;
     await booking.save();
 
     res.json({
       order_id: order.id,
       currency: order.currency,
-      amount: order.amount, // smallest currency unit (for Razorpay)
-      key: process.env.RAZORPAY_KEY_ID, // Send key to frontend
-      displayAmount: paymentAmount, // original amount for frontend display
+      amount: order.amount,
+      key: process.env.RAZORPAY_KEY_ID,
+      displayAmount: paymentAmount,
       booking: {
         id: booking._id,
+        bookingId: booking.bookingId,
         date: booking.date,
         slot: booking.slot,
         court: booking.courtName,
-        player: booking.playerCount
+        player: booking.playerCount,
+        duration: booking.duration,
       },
     });
   } catch (e) {
@@ -157,11 +177,10 @@ router.post("/verify", async (req, res) => {
       bookingId,
     } = req.body;
 
-    const booking = await Booking.findById(bookingId);
+    const booking = await findBookingById(bookingId);
     if (!booking) return res.status(404).json({ error: "Booking not found" });
 
     // Check if the court is still available before confirming
-    // Get the slot to check its time
     const slot = await Slot.findById(booking.slotId);
     if (!slot) {
       return res.status(404).json({ error: "Slot not found" });
@@ -177,17 +196,14 @@ router.post("/verify", async (req, res) => {
     let shouldCheckBookings = true;
 
     if (bookingDate < currentDate) {
-      // If booking date is in the past, courts should be available
       shouldCheckBookings = false;
     } else if (bookingDate.toDateString() === currentDate.toDateString()) {
-      // If booking date is today, check if the slot time has passed
-      const slotTimeParts = slot.time.split(" - ")[1]; // Get end time (e.g., "08:00")
+      const slotTimeParts = slot.time.split(" - ")[1];
       if (slotTimeParts) {
         const [hours, minutes] = slotTimeParts.split(":").map(Number);
         const slotEndTime = new Date(currentDate);
         slotEndTime.setHours(hours, minutes, 0, 0);
 
-        // If current time is after slot end time, courts should be available
         if (currentDate > slotEndTime) {
           shouldCheckBookings = false;
         }
@@ -204,14 +220,14 @@ router.post("/verify", async (req, res) => {
         _id: { $ne: booking._id },
       });
 
-      // Calculate total players already booked for this court, date, and time slot
+      // Calculate total players already booked
       let totalBookedPlayers = 0;
       existingBookings.forEach((existingBooking) => {
         totalBookedPlayers += existingBooking.playerCount || 1;
       });
 
       // Calculate available player capacity
-      const availablePlayers = 4 - totalBookedPlayers; // Maximum 4 players per court
+      const availablePlayers = 4 - totalBookedPlayers;
 
       // Check if the current booking can be accommodated
       if (availablePlayers < booking.playerCount) {
@@ -223,7 +239,6 @@ router.post("/verify", async (req, res) => {
         });
       }
 
-      // Additional check: if there are any existing bookings at all for this slot
       if (existingBookings.length > 0) {
         console.log(
           `Court ${booking.courtName} has ${totalBookedPlayers} players booked, ${availablePlayers} spots available for ${booking.date} ${booking.slot}`
@@ -231,34 +246,32 @@ router.post("/verify", async (req, res) => {
       }
     }
 
-    // Generate invoice number
-    const invoiceNumber = "INV-" + Date.now().toString().substring(7);
-
-    // In production: verify signature using razorpay_signature
+    // Update booking status
     booking.status = "confirmed";
     booking.confirmedAt = new Date();
     booking.paymentId = razorpay_payment_id;
-    booking.invoiceNumber = invoiceNumber;
     await booking.save();
 
-    // Generate receipt URL
+    // Generate receipt URL using the custom booking ID
     const receiptUrl = `${
       process.env.BASE_URL || "http://localhost:4000"
-    }/payment/receipt/${booking._id}?invoice=${invoiceNumber}`;
+    }/payment/receipt/${booking.bookingId || booking._id}?invoice=${booking.invoiceNumber}`;
 
     // Send WhatsApp confirmation
     if (booking.whatsapp) {
-      const qrCodeLink = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${booking._id}`;
+      const qrCodeLink = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${booking.bookingId || booking._id}`;
       await sendWhatsApp(
         booking.whatsapp,
         `✅ *Booking Confirmed!*
 
-Booking ID: ${booking._id}
+🆔 Booking ID: ${booking.bookingId}
 📅 Date: ${booking.date}
 ⏰ Time: ${booking.slot}
+⏱️ Duration: ${booking.duration}
 🎾 Court: ${booking.courtName}
 👥 Players: ${booking.playerCount}
-💰 Total Amount: ₹${booking.amount}
+💵 Total Amount: ₹${booking.amount}
+📄 Invoice: ${booking.invoiceNumber}
 
 View your receipt: ${receiptUrl}
 
@@ -272,13 +285,14 @@ Thank you for booking with NashikPicklers! Reply 'menu' to return to main menu.`
       success: true,
       booking: {
         id: booking._id,
+        bookingId: booking.bookingId,
         status: booking.status,
         date: booking.date,
         slot: booking.slot,
         court: booking.courtName,
         player: booking.playerCount,
         amount: booking.amount,
-        paymentId: req.body.razorpay_payment_id,
+        paymentId: razorpay_payment_id,
         receiptUrl: receiptUrl,
       },
     });
@@ -290,7 +304,7 @@ Thank you for booking with NashikPicklers! Reply 'menu' to return to main menu.`
 // Check-in a player
 router.post("/check-in/:id", async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const booking = await findBookingById(req.params.id);
     if (!booking) return res.status(404).json({ error: "Booking not found" });
 
     if (booking.status !== "confirmed") {
@@ -330,12 +344,13 @@ router.post("/check-in/:id", async (req, res) => {
 A player has just checked in:
 
 📋 Booking Details:
-📧 ID: ${booking._id}
+🆔 Booking ID: ${booking.bookingId}
 🎾 Court: ${booking.courtName}
 📅 Date: ${booking.date}
 ⏰ Time: ${booking.slot}
+⏱️ Duration: ${booking.duration}
 👥 Players: ${booking.playerCount}
-💰 Amount: ${booking.amount}
+💰 Amount: ₹${booking.amount}
 ⏰ Check-in Time: ${checkInTime}
 
 This is an automated notification.`
@@ -347,6 +362,7 @@ This is an automated notification.`
       message: "Player checked in successfully",
       booking: {
         id: booking._id,
+        bookingId: booking.bookingId,
         date: booking.date,
         slot: booking.slot,
         court: booking.courtName,
@@ -365,7 +381,7 @@ This is an automated notification.`
 // Cancel booking
 router.post("/cancel/:id", async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const booking = await findBookingById(req.params.id);
     if (!booking) return res.status(404).json({ error: "Booking not found" });
 
     if (booking.status === "confirmed") {
@@ -383,17 +399,17 @@ router.post("/cancel/:id", async (req, res) => {
         booking.whatsapp,
         `❌ Booking Cancelled
 
-Booking ID: ${booking._id}
-Date: ${booking.date}
-Time: ${booking.slot}
-Court: ${booking.courtName}
-Players: ${booking.playerCount}
+🆔 Booking ID: ${booking.bookingId}
+📅 Date: ${booking.date}
+⏰ Time: ${booking.slot}
+🎾 Court: ${booking.courtName}
+👥 Players: ${booking.playerCount}
 
 Your booking has been cancelled successfully.`
       );
     }
 
-    res.json({ success: true, bookingId: booking._id });
+    res.json({ success: true, bookingId: booking.bookingId });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -407,7 +423,7 @@ router.post("/webhook", async (req, res) => {
     const bookingId = payment?.notes?.bookingId;
 
     if (bookingId) {
-      const booking = await Booking.findById(bookingId);
+      const booking = await findBookingById(bookingId);
       if (booking && booking.status !== "confirmed") {
         booking.status = "confirmed";
         booking.confirmedAt = new Date();
@@ -417,19 +433,22 @@ router.post("/webhook", async (req, res) => {
         // Generate receipt URL
         const receiptUrl = `${
           process.env.BASE_URL || "http://localhost:4000"
-        }/receipt/${booking._id}`;
+        }/payment/receipt/${booking.bookingId || booking._id}`;
 
         if (booking.whatsapp) {
-          const qrCodeLink = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${booking._id}`;
+          const qrCodeLink = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${booking.bookingId || booking._id}`;
           await sendWhatsApp(
             booking.whatsapp,
-            `💼 Booking Confirmed!
+            `✅ *Booking Confirmed!*
 
-Booking ID: ${booking._id}
-Date: ${booking.date}
-Time: ${booking.slot}
-Court: ${booking.courtName}
-Players: ${booking.playerCount}
+🆔 Booking ID: ${booking.bookingId}
+📅 Date: ${booking.date}
+⏰ Time: ${booking.slot}
+⏱️ Duration: ${booking.duration}
+🎾 Court: ${booking.courtName}
+👥 Players: ${booking.playerCount}
+💵 Total Amount: ₹${booking.amount}
+📄 Invoice: ${booking.invoiceNumber}
 
 View your receipt: ${receiptUrl}
 
