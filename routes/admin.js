@@ -286,9 +286,7 @@ router.get("/slots/availability", auth, async (req, res) => {
 // Bookings
 router.get("/bookings", auth, async (req, res) => {
   try {
-    const bookings = await Booking.find({
-      status: { $in: ["confirmed"] },
-    }).sort({ createdAt: -1 });
+    const bookings = await Booking.find().sort({ createdAt: -1 });
     res.json(bookings);
   } catch (err) {
     res.status(500).json({ message: "Server error" });

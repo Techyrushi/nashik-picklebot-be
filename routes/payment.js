@@ -23,7 +23,7 @@ async function findBookingById(id) {
     const booking = await Booking.findById(id);
     if (booking) return booking;
   }
-  
+
   // If not found by ObjectId, try finding by bookingId (NP-01, etc.)
   return await Booking.findOne({ bookingId: id });
 }
@@ -253,16 +253,14 @@ router.post("/verify", async (req, res) => {
     await booking.save();
 
     // Generate receipt URL using the custom booking ID
-    const receiptUrl = `${
-      process.env.BASE_URL || "http://localhost:4000"
-    }/payment/receipt/${booking.bookingId || booking._id}?invoice=${booking.invoiceNumber}`;
+    const receiptUrl = `${process.env.BASE_URL || "http://localhost:4000"
+      }/payment/receipt/${booking.bookingId || booking._id}?invoice=${booking.invoiceNumber}`;
 
     // Send WhatsApp confirmation
+    // Send WhatsApp confirmation to user
     if (booking.whatsapp) {
       const qrCodeLink = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${booking.bookingId || booking._id}`;
-      await sendWhatsApp(
-        booking.whatsapp,
-        `✅ *Booking Confirmed!*
+      const message = `✅ *Booking Confirmed!*
 
 🆔 Booking ID: ${booking.bookingId}
 📅 Date: ${booking.date}
@@ -277,8 +275,39 @@ View your receipt: ${receiptUrl}
 
 QR Code for check-in: ${qrCodeLink}
 
-Thank you for booking with NashikPicklers! Reply 'menu' to return to main menu.`
-      );
+Thank you for booking with NashikPicklers! Reply 'menu' to return to main menu.`;
+
+      // Send to user
+      await sendWhatsApp(booking.whatsapp, message);
+
+      // Send to multiple admins
+      const adminWhatsAppList = process.env.ADMIN_WHATSAPP
+        ? process.env.ADMIN_WHATSAPP.split(',').map(num => num.trim())
+        : [];
+
+      if (adminWhatsAppList.length > 0) {
+        const adminMessage = `📢 *New Booking Confirmed!*
+
+📞 User: ${booking.whatsapp}
+🆔 Booking ID: ${booking.bookingId}
+🎾 Court: ${booking.courtName}
+📅 Date: ${booking.date}
+⏰ Time: ${booking.slot}
+⏱️ Duration: ${booking.duration}
+👥 Players: ${booking.playerCount}
+💵 Total Amount: ₹${booking.amount}
+📄 Invoice: ${booking.invoiceNumber}
+
+This is an automated admin notification.`;
+
+        for (const admin of adminWhatsAppList) {
+          try {
+            await sendWhatsApp(admin, adminMessage);
+          } catch (err) {
+            console.error(`Failed to send WhatsApp to admin ${admin}:`, err.message);
+          }
+        }
+      }
     }
 
     res.json({
@@ -334,14 +363,15 @@ router.post("/check-in/:id", async (req, res) => {
       }
     );
 
-    // Send notification to admin
-    const adminWhatsApp = process.env.ADMIN_WHATSAPP;
-    if (adminWhatsApp) {
-      await sendWhatsApp(
-        adminWhatsApp,
-        `🎾 Player Check-In Alert
+    // Send notification to multiple admins
+    const adminWhatsAppList = process.env.ADMIN_WHATSAPP
+      ? process.env.ADMIN_WHATSAPP.split(',').map(num => num.trim())
+      : [];
 
-A player has just checked in:
+    if (adminWhatsAppList.length > 0) {
+      const message = `🎾 Player Check-In Alert
+
+A player [+${booking.whatsapp}] has just checked in:
 
 📋 Booking Details:
 🆔 Booking ID: ${booking.bookingId}
@@ -353,8 +383,15 @@ A player has just checked in:
 💰 Amount: ₹${booking.amount}
 ⏰ Check-in Time: ${checkInTime}
 
-This is an automated notification.`
-      );
+This is an automated notification.`;
+
+      for (const admin of adminWhatsAppList) {
+        try {
+          await sendWhatsApp(admin, message);
+        } catch (err) {
+          console.error(`Failed to send WhatsApp to ${admin}:`, err.message);
+        }
+      }
     }
 
     res.json({
@@ -409,7 +446,7 @@ Your booking has been cancelled successfully.`
       );
     }
 
-    res.json({ success: true, bookingId: booking.bookingId });
+    res.json({ success: true, bookingId: booking.bookingId, amount: booking.amount, status: booking.status });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -431,9 +468,8 @@ router.post("/webhook", async (req, res) => {
         await booking.save();
 
         // Generate receipt URL
-        const receiptUrl = `${
-          process.env.BASE_URL || "http://localhost:4000"
-        }/payment/receipt/${booking.bookingId || booking._id}`;
+        const receiptUrl = `${process.env.BASE_URL || "http://localhost:4000"
+          }/payment/receipt/${booking.bookingId || booking._id}`;
 
         if (booking.whatsapp) {
           const qrCodeLink = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${booking.bookingId || booking._id}`;

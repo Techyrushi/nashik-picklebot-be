@@ -4,6 +4,7 @@ const Slot = require("../models/Slot");
 const Court = require("../models/Court");
 const sendWhatsApp = require("../utils/sendWhatsApp");
 const { nanoid } = require("nanoid");
+const cron = require("node-cron");
 
 const router = express.Router();
 
@@ -206,32 +207,32 @@ function isTimeSlotAvailable(slotTime, selectedDate) {
   }
 }
 
-// Function to create payment link with expiry
+cron.schedule("* * * * *", async () => {
+  const now = new Date();
+  const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+
+  const expiredBookings = await Booking.find({
+    status: "pending_payment",
+    createdAt: { $lte: fiveMinutesAgo },
+  });
+
+  for (const booking of expiredBookings) {
+    booking.status = "expired";
+    await booking.save();
+
+    await sendWhatsApp(
+      booking.whatsapp,
+      `❌ *Payment Link Expired*\n\nYour payment link for booking ${booking.bookingId} has expired. Please book again to confirm your slot.\n\nReply 'menu' to return to main menu.`
+    );
+  }
+});
+
+// Payment link creation
 function createPaymentLink(bookingId) {
   const baseUrl = process.env.BASE_URL || "http://localhost:4000";
-  const paymentLink = `${baseUrl}/payment?booking=${bookingId}`;
-
-  // Set expiry after 5 minutes
-  setTimeout(async () => {
-    try {
-      const booking = await Booking.findById(bookingId);
-      if (booking && booking.status === "pending_payment") {
-        booking.status = "expired";
-        await booking.save();
-
-        // Send expiry message
-        await sendWhatsApp(
-          booking.whatsapp,
-          `❌ *Payment Link Expired*\n\nYour payment link for booking ${booking.bookingId} has expired. Please book again to confirm your slot.\n\nReply 'menu' to return to main menu.`
-        );
-      }
-    } catch (error) {
-      console.error("Error handling payment link expiry:", error);
-    }
-  }, 5 * 60 * 1000); // 5 minutes
-
-  return paymentLink;
+  return `${baseUrl}/payment?booking=${bookingId}`;
 }
+
 
 router.post("/", async (req, res) => {
   try {
@@ -251,7 +252,10 @@ router.post("/", async (req, res) => {
       body === "exit" ||
       body === "Hi" ||
       body === "Hello" ||
-      body === "menu"
+      body === "menu" ||
+      body === "Thank You" ||
+      body === "start" ||
+      body === "thanks"
     ) {
       delete sessions[from];
       sessions[from] = { stage: "menu" };
@@ -370,7 +374,6 @@ Reply with a number or option name.`
 • Maximum 4 players per court
 • Cancellations with full refund allowed up to 24 hours before
 • Late cancellations incur a 50% fee
-• No-shows are charged full amount
 • Please arrive 10 minutes before your slot
 
 Reply with 'menu' to return to main menu.`;
@@ -939,7 +942,7 @@ Reply 'menu' for main menu.`
           await booking.save();
           await sendWhatsApp(
             from,
-            "Booking cancelled successfully. Reply 'menu' to return to main menu."
+            "❌ Booking cancelled successfully. If your payment was successful for this cancelled booking, please contact our support team for a refund. Reply 'menu' to return to main menu."
           );
         } else {
           await sendWhatsApp(
@@ -965,7 +968,7 @@ Reply with the number or option name.`
       } else {
         await sendWhatsApp(
           from,
-          "Please reply with 'paid' after completing payment, 'cancel' to cancel booking, or 'menu' for main menu."
+          "Please reply with 'cancel' to cancel your booking, or 'menu' to return to the main menu."
         );
         return res.end();
       }

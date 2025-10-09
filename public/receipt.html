@@ -1,15 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NashikPicklers - Booking Receipt</title>
 
   <!-- SweetAlert2 -->
-  <link
-    rel="stylesheet"
-    href="https://cdn.jsdelivr.net/npm/sweetalert2@11.0.19/dist/sweetalert2.min.css"
-  />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11.0.19/dist/sweetalert2.min.css" />
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.0.19/dist/sweetalert2.all.min.js"></script>
 
   <style>
@@ -49,6 +47,13 @@
       text-align: center;
       margin-bottom: 5px;
     }
+
+    .logos {
+      width: 80px;
+      display: block;
+      margin: 0 auto 12px;
+    }
+
     .logo h2 {
       font-size: 30px;
       font-weight: 700;
@@ -126,6 +131,7 @@
       padding: 5px;
       transition: transform 0.3s;
     }
+
     .qr-section img:hover {
       transform: scale(1.05);
     }
@@ -162,6 +168,7 @@
     .btn-print {
       background: var(--primary);
     }
+
     .btn-print:hover {
       background: #43a047;
     }
@@ -169,6 +176,7 @@
     #whatsapp-button {
       background-color: var(--whatsapp);
     }
+
     #whatsapp-button:hover {
       background-color: #1ebe5b;
     }
@@ -194,6 +202,7 @@
         opacity: 0;
         transform: translateY(10px);
       }
+
       to {
         opacity: 1;
         transform: translateY(0);
@@ -204,18 +213,23 @@
       .container {
         padding: 15px;
       }
+
       h1 {
         font-size: 1.4rem;
       }
+
       .receipt {
         padding: 12px;
       }
+
       .receipt-header h2 {
         font-size: 1rem;
       }
+
       .qr-section img {
         max-width: 120px;
       }
+
       .btn-group {
         flex-direction: column;
       }
@@ -226,6 +240,7 @@
 <body>
   <div class="container">
     <div class="logo">
+      <img src="/payment/logo" alt="NashikPicklers" class="logos" />
       <h2>NashikPicklers</h2>
     </div>
 
@@ -334,7 +349,7 @@
           whatsappButton.href = `https://wa.me/+14155238886?text=Thank%20you%20for%20confirming%20my%20booking%20for%20${encodeURIComponent(
             data.date
           )}%20at%20${encodeURIComponent(data.slot)}.%20My%20booking%20ID%20is%20${encodeURIComponent(
-            data.id
+            data.bookingId
           )}`;
         })
         .catch((error) => {
@@ -351,4 +366,5 @@
     }
   </script>
 </body>
+
 </html>
