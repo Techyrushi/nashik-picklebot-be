@@ -50,6 +50,10 @@ router.get("/logo", (req, res) => {
   res.sendFile(path.join(__dirname, "../public/assets/myyvo_logo.png"));
 });
 
+router.get("/favicon", (req, res) => {
+  res.sendFile(path.join(__dirname, "../public/assets/favicon.png"));
+});
+
 // Serve receipt page
 router.get("/receipt/:id", async (req, res) => {
   try {
