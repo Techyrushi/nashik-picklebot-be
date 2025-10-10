@@ -3,7 +3,7 @@ const Booking = require("../models/Booking");
 const Slot = require("../models/Slot");
 const Court = require("../models/Court");
 const sendWhatsApp = require("../utils/sendWhatsApp");
-const { nanoid } = require("nanoid");
+// const { nanoid } = require("nanoid");
 const cron = require("node-cron");
 
 const router = express.Router();
