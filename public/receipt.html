@@ -347,11 +347,7 @@
           document.getElementById("receipt").style.display = "block";
 
           const whatsappButton = document.getElementById("whatsapp-button");
-          whatsappButton.href = `https://wa.me/+14155238886?text=Thank%20you%20for%20confirming%20my%20booking%20for%20${encodeURIComponent(
-            data.date
-          )}%20at%20${encodeURIComponent(data.slot)}.%20My%20booking%20ID%20is%20${encodeURIComponent(
-            data.bookingId
-          )}`;
+          whatsappButton.href = `https://wa.me/+14155238886?text=Thank you for confirming my booking.`;
         })
         .catch((error) => {
           showError(error.message || "Failed to load receipt");

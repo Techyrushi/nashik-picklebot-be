@@ -255,7 +255,10 @@ router.post("/", async (req, res) => {
       body === "menu" ||
       body === "Thank You" ||
       body === "start" ||
-      body === "thanks"
+      body === "thanks" ||
+      body === "thank you" ||
+      body === "Thanks" ||
+      body === "Start" || body === "Thank you for confirming my booking."
     ) {
       delete sessions[from];
       sessions[from] = { stage: "menu" };
