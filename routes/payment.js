@@ -375,7 +375,7 @@ router.post("/check-in/:id", async (req, res) => {
     if (adminWhatsAppList.length > 0) {
       const message = `🎾 Player Check-In Alert
 
-A player [+${booking.whatsapp}] has just checked in:
+A player [${booking.whatsapp}] has just checked in:
 
 📋 Booking Details:
 🆔 Booking ID: ${booking.bookingId}
