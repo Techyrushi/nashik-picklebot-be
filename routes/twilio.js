@@ -3,7 +3,7 @@ const Booking = require("../models/Booking");
 const Slot = require("../models/Slot");
 const Court = require("../models/Court");
 const sendWhatsApp = require("../utils/sendWhatsApp");
-const { nanoid } = require("nanoid");
+// const { nanoid } = require("nanoid");
 const cron = require("node-cron");
 
 const router = express.Router();
@@ -255,7 +255,10 @@ router.post("/", async (req, res) => {
       body === "menu" ||
       body === "Thank You" ||
       body === "start" ||
-      body === "thanks"
+      body === "thanks" ||
+      body === "thank you" ||
+      body === "Thanks" ||
+      body === "Start" || body === "Thank you for confirming my booking."
     ) {
       delete sessions[from];
       sessions[from] = { stage: "menu" };
